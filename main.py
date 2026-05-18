@@ -105,6 +105,7 @@ class MapCanvas(QWidget):
         self.show_biomes = False
         self.show_heightmap = False
         self.show_humidity = False
+        self.show_temperature = False
         self.show_winds = False
         
         self.pan_active = False
@@ -195,13 +196,12 @@ class MapCanvas(QWidget):
         min_dist = float('inf')
         for cont in self.continents:
             for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    shifted = [QPointF(p.x() + dx * w, p.y() + dy * h) for p in cont]
-                    for p1 in new_poly:
-                        for p2 in shifted:
-                            dist = math.hypot(p1.x() - p2.x(), p1.y() - p2.y())
-                            if dist < min_dist:
-                                min_dist = dist
+                shifted = [QPointF(p.x() + dx * w, p.y()) for p in cont]
+                for p1 in new_poly:
+                    for p2 in shifted:
+                        dist = math.hypot(p1.x() - p2.x(), p1.y() - p2.y())
+                        if dist < min_dist:
+                            min_dist = dist
         return min_dist
             
     def paintEvent(self, event):
@@ -211,6 +211,8 @@ class MapCanvas(QWidget):
         
         if self.biome_map is not None and self.show_biomes:
             self.draw_biome_map(painter)
+        elif self.temperature_map is not None and self.show_temperature:
+            self.draw_temperature_map(painter)
         elif self.humidity_map is not None and self.show_humidity:
             self.draw_humidity_map(painter)
         elif self.height_map is not None and self.show_heightmap:
@@ -218,21 +220,30 @@ class MapCanvas(QWidget):
         else:
             w = self.width()
             h = self.height()
+            
+            # Отрисовка материков с учётом тора (только по горизонтали)
             for cont in self.continents:
-                painter.setBrush(QBrush(QColor(144, 238, 144)))
-                painter.setPen(QPen(Qt.darkGreen, 2))
-                painter.drawPolygon(QPolygonF(cont))
+                for dx in (-1, 0, 1):
+                    shifted = [QPointF(p.x() + dx * w, p.y()) for p in cont]
+                    painter.setBrush(QBrush(QColor(144, 238, 144)))
+                    painter.setPen(QPen(Qt.darkGreen, 2))
+                    painter.drawPolygon(QPolygonF(shifted))
             
             if self.drawing_mode == "continent" and len(self.current_continent_points) > 1:
                 painter.setPen(QPen(Qt.gray, 2))
                 for i in range(len(self.current_continent_points)-1):
                     painter.drawLine(self.current_continent_points[i], self.current_continent_points[i+1])
             
+            # Отрисовка плит с учётом тора (только по горизонтали)
             for plate in self.plates:
-                painter.setPen(QPen(Qt.red, 2))
-                painter.setBrush(Qt.NoBrush)
-                if len(plate.points) > 1:
-                    painter.drawPolygon(QPolygonF(plate.points))
+                for dx in (-1, 0, 1):
+                    shifted = [QPointF(p.x() + dx * w, p.y()) for p in plate.points]
+                    painter.setPen(QPen(Qt.red, 2))
+                    painter.setBrush(Qt.NoBrush)
+                    if len(shifted) > 1:
+                        painter.drawPolygon(QPolygonF(shifted))
+                
+                # Стрелка направления (только в основном положении)
                 if plate.points:
                     center = self.polygon_center(plate.points)
                     dx, dy = plate.direction
@@ -257,6 +268,42 @@ class MapCanvas(QWidget):
         
         if self.wind_map is not None and self.show_winds:
             self.draw_wind_map(painter)
+    
+    def draw_temperature_map(self, painter):
+        if self.temperature_map is None:
+            return
+        h, w = self.temperature_map.shape
+        block_size = 4
+        
+        for y in range(0, h, block_size):
+            for x in range(0, w, block_size):
+                temp = self.temperature_map[y, x]
+                
+                # От холодного (синий) к тёплому (красный)
+                if temp < -30:
+                    color = QColor(30, 30, 120)
+                elif temp < -20:
+                    t = (temp + 30) / 10
+                    color = QColor(30 + int(t * 30), 30 + int(t * 30), 120 - int(t * 40))
+                elif temp < -10:
+                    t = (temp + 20) / 10
+                    color = QColor(60 + int(t * 40), 60 + int(t * 40), 80 - int(t * 30))
+                elif temp < 0:
+                    t = (temp + 10) / 10
+                    color = QColor(100 + int(t * 50), 100 + int(t * 50), 50 - int(t * 20))
+                elif temp < 10:
+                    t = temp / 10
+                    color = QColor(150 + int(t * 50), 150 + int(t * 30), 50 - int(t * 30))
+                elif temp < 20:
+                    t = (temp - 10) / 10
+                    color = QColor(200 + int(t * 55), 180 - int(t * 30), 50 - int(t * 20))
+                elif temp < 30:
+                    t = (temp - 20) / 10
+                    color = QColor(255, 150 - int(t * 50), 50 - int(t * 20))
+                else:
+                    color = QColor(255, 50, 50)
+                
+                painter.fillRect(QRect(x, y, block_size, block_size), color)
     
     def draw_wind_map(self, painter):
         if self.wind_map is None:
@@ -410,11 +457,9 @@ class MapCanvas(QWidget):
             if path is None:
                 continue
             for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    px = x + dx * w
-                    py = y + dy * h
-                    if path.contains(QPointF(px, py)):
-                        return True
+                px = x + dx * w
+                if path.contains(QPointF(px, y)):
+                    return True
         return False
         
     def set_height_map(self, hmap):
@@ -422,6 +467,7 @@ class MapCanvas(QWidget):
         self.show_heightmap = True
         self.show_biomes = False
         self.show_humidity = False
+        self.show_temperature = False
         self.show_winds = False
         self.update()
         
@@ -432,6 +478,7 @@ class MapCanvas(QWidget):
         self.show_humidity = True
         self.show_heightmap = False
         self.show_biomes = False
+        self.show_temperature = False
         self.update()
         
     def set_biome_map(self, bmap):
@@ -439,7 +486,20 @@ class MapCanvas(QWidget):
         self.show_biomes = True
         self.show_heightmap = False
         self.show_humidity = False
+        self.show_temperature = False
         self.show_winds = False
+        self.update()
+    
+    def set_temperature_map(self, temp_map):
+        self.temperature_map = temp_map
+        if self.show_temperature:
+            self.update()
+    
+    def show_temperature_layer(self):
+        self.show_temperature = True
+        self.show_biomes = False
+        self.show_heightmap = False
+        self.show_humidity = False
         self.update()
 
 # ------------------------------ Главное окно ------------------------------
@@ -584,9 +644,9 @@ class TerrainGeneratorApp(QMainWindow):
         self.sea_slider.valueChanged.connect(self.on_sea_level_changed)
         params_layout.addWidget(self.sea_slider)
         
-        params_layout.addWidget(QLabel("Глобальная температура (влияет на биомы!):"))
+        params_layout.addWidget(QLabel("Глобальная температура:"))
         self.temp_slider = QSlider(Qt.Horizontal)
-        self.temp_slider.setRange(-20, 40)
+        self.temp_slider.setRange(-40, 40)
         self.temp_slider.setValue(25)
         self.temp_slider.valueChanged.connect(self.on_global_temp_changed)
         params_layout.addWidget(self.temp_slider)
@@ -603,9 +663,11 @@ class TerrainGeneratorApp(QMainWindow):
         btn_gen_height = QPushButton("2. Создать карту высот")
         btn_gen_humidity = QPushButton("3. Создать карту влажности")
         btn_gen_biomes = QPushButton("4. Создать биомы")
+        btn_gen_temperature = QPushButton("Обновить карту температур")
         btn_show_full = QPushButton("Показать биомы")
         btn_show_humidity = QPushButton("Показать влажность")
         btn_show_height = QPushButton("Показать высоты")
+        btn_show_temperature = QPushButton("Показать температуру")
         btn_show_winds = QPushButton("Показать ветра")
         btn_save = QPushButton("Сохранить карту")
         btn_load = QPushButton("Загрузить карту")
@@ -615,9 +677,11 @@ class TerrainGeneratorApp(QMainWindow):
         btn_gen_height.clicked.connect(self.generate_heightmap)
         btn_gen_humidity.clicked.connect(self.generate_humidity_map)
         btn_gen_biomes.clicked.connect(self.generate_biomes)
+        btn_gen_temperature.clicked.connect(self.generate_temperature_map)
         btn_show_full.clicked.connect(self.show_full_map)
         btn_show_humidity.clicked.connect(self.show_humidity_map)
         btn_show_height.clicked.connect(self.show_height_map)
+        btn_show_temperature.clicked.connect(self.show_temperature_map)
         btn_show_winds.clicked.connect(self.show_winds)
         btn_save.clicked.connect(self.save_map)
         btn_load.clicked.connect(self.load_map)
@@ -627,9 +691,11 @@ class TerrainGeneratorApp(QMainWindow):
         actions_layout.addWidget(btn_gen_height)
         actions_layout.addWidget(btn_gen_humidity)
         actions_layout.addWidget(btn_gen_biomes)
+        actions_layout.addWidget(btn_gen_temperature)
         actions_layout.addWidget(btn_show_full)
         actions_layout.addWidget(btn_show_humidity)
         actions_layout.addWidget(btn_show_height)
+        actions_layout.addWidget(btn_show_temperature)
         actions_layout.addWidget(btn_show_winds)
         actions_layout.addWidget(btn_save)
         actions_layout.addWidget(btn_load)
@@ -638,14 +704,16 @@ class TerrainGeneratorApp(QMainWindow):
         
         info_group = QGroupBox("Инструкция")
         info_text = QLabel(
-            "1. Нарисуйте материк\n"
+            "1. Нарисуйте материк (замкнутую линию)\n"
             "2. Нажмите 'Сгенерировать материк'\n"
             "3. Нарисуйте 2+ литосферные плиты\n"
             "4. Настройте СКОРОСТЬ ПЛИТ (влияет на высоту гор!)\n"
             "5. Нажмите 'Создать карту высот'\n"
-            "6. Настройте скорость ветров и температуру\n"
-            "7. Нажмите 'Создать карту влажности' (ветра влияют!)\n"
+            "6. Настройте скорость ветров\n"
+            "7. Нажмите 'Создать карту влажности'\n"
             "8. Нажмите 'Создать биомы'\n\n"
+            "Карта соединяется ТОЛЬКО по горизонтали (лево-право)\n"
+            "Температура: Экватор = глобальная, Полюса = глобальная - 40°C\n\n"
             "СОХРАНЕНИЕ: сохраняет все карты и настройки в JSON\n"
             "ЗАГРУЗКА: загружает ранее сохранённую карту\n\n"
             "ПКМ + перетаскивание - перемещение"
@@ -671,7 +739,6 @@ class TerrainGeneratorApp(QMainWindow):
     # ------------------------------ СОХРАНЕНИЕ И ЗАГРУЗКА ------------------------------
     
     def save_map(self):
-        """Сохраняет всю карту в JSON файл"""
         if self.canvas.height_map is None:
             QMessageBox.warning(self, "Предупреждение", "Нет созданной карты для сохранения!")
             return
@@ -680,12 +747,10 @@ class TerrainGeneratorApp(QMainWindow):
         if not file_path:
             return
         
-        # Добавляем расширение .json если его нет
         if not file_path.endswith('.json'):
             file_path += '.json'
         
         try:
-            # Подготовка данных для сохранения
             save_data = {
                 'version': '1.0',
                 'settings': {
@@ -704,28 +769,22 @@ class TerrainGeneratorApp(QMainWindow):
                 'plates': [plate.to_dict() for plate in self.canvas.plates],
             }
             
-            # Сохранение карты высот
             if self.canvas.height_map is not None:
                 save_data['height_map'] = self.canvas.height_map.tolist()
             
-            # Сохранение карты влажности
             if self.canvas.humidity_map is not None:
                 save_data['humidity_map'] = self.canvas.humidity_map.tolist()
             
-            # Сохранение карты биомов
             if self.canvas.biome_map is not None:
                 biome_map_data = [[b.value if b is not None else None for b in row] for row in self.canvas.biome_map]
                 save_data['biome_map'] = biome_map_data
             
-            # Сохранение карты температур
             if self.canvas.temperature_map is not None:
                 save_data['temperature_map'] = self.canvas.temperature_map.tolist()
             
-            # Сохранение карты ветров
             if self.canvas.wind_map is not None:
                 save_data['wind_map'] = self.canvas.wind_map.tolist()
             
-            # Запись в файл
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(save_data, f, ensure_ascii=False, indent=2)
             
@@ -736,7 +795,6 @@ class TerrainGeneratorApp(QMainWindow):
             QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить карту:\n{str(e)}")
     
     def load_map(self):
-        """Загружает карту из JSON файла"""
         file_path, _ = QFileDialog.getOpenFileName(self, "Загрузить карту", "", "JSON files (*.json);;All Files (*)")
         if not file_path:
             return
@@ -745,10 +803,8 @@ class TerrainGeneratorApp(QMainWindow):
             with open(file_path, 'r', encoding='utf-8') as f:
                 load_data = json.load(f)
             
-            # Очистка текущей карты
             self.clear_all()
             
-            # Загрузка настроек
             settings = load_data.get('settings', {})
             self.roughness = settings.get('roughness', self.roughness)
             self.iterations = settings.get('iterations', self.iterations)
@@ -761,7 +817,6 @@ class TerrainGeneratorApp(QMainWindow):
             self.westerly_speed = settings.get('westerly_speed', self.westerly_speed)
             self.polar_speed = settings.get('polar_speed', self.polar_speed)
             
-            # Обновление UI элементов
             self.roughness_slider.setValue(int(self.roughness * 100))
             self.iter_spin.setValue(self.iterations)
             self.speed_slider.setValue(int(self.plate_speed * 10))
@@ -773,32 +828,27 @@ class TerrainGeneratorApp(QMainWindow):
             self.westerly_slider.setValue(int(self.westerly_speed * 100))
             self.polar_slider.setValue(int(self.polar_speed * 100))
             
-            # Загрузка материков
             continents_data = load_data.get('continents', [])
             for cont_data in continents_data:
                 polygon = [QPointF(x, y) for x, y in cont_data]
                 self.canvas.continents.append(polygon)
             self.canvas.continent_paths = [polygon_to_path(cont) for cont in self.canvas.continents]
             
-            # Загрузка плит
             plates_data = load_data.get('plates', [])
             for plate_data in plates_data:
                 plate = Plate.from_dict(plate_data)
                 self.canvas.plates.append(plate)
             
-            # Загрузка карты высот
             if 'height_map' in load_data:
                 height_data = np.array(load_data['height_map'], dtype=np.float32)
                 self.canvas.height_map = height_data
                 self.canvas.show_heightmap = True
             
-            # Загрузка карты влажности
             if 'humidity_map' in load_data:
                 humidity_data = np.array(load_data['humidity_map'], dtype=np.float32)
                 self.humidity_map = humidity_data
                 self.canvas.humidity_map = humidity_data
             
-            # Загрузка карты биомов
             if 'biome_map' in load_data:
                 biome_data = load_data['biome_map']
                 biome_map = np.zeros((len(biome_data), len(biome_data[0]) if biome_data else 0), dtype=object)
@@ -808,19 +858,14 @@ class TerrainGeneratorApp(QMainWindow):
                             biome_map[y, x] = BiomeType.from_dict(val)
                 self.canvas.biome_map = biome_map
             
-            # Загрузка карты температур
             if 'temperature_map' in load_data:
                 self.canvas.temperature_map = np.array(load_data['temperature_map'], dtype=np.float32)
             
-            # Загрузка карты ветров
             if 'wind_map' in load_data:
                 wind_data = load_data['wind_map']
                 self.canvas.wind_map = np.array(wind_data, dtype=np.float32)
             
-            # Обновление уровня моря на холсте
             self.canvas.sea_level = self.sea_level
-            
-            # Перерисовка
             self.canvas.update()
             
             QMessageBox.information(self, "Загрузка", f"Карта успешно загружена из {file_path}")
@@ -832,22 +877,32 @@ class TerrainGeneratorApp(QMainWindow):
     def on_trade_wind_changed(self, value):
         self.trade_wind_speed = value / 100
         self.trade_label.setText(f"{value}%")
-        self.status_label.setText(f"Пассаты: {value}% -> влияет на влажность (выше = влажнее)")
         
     def on_westerly_changed(self, value):
         self.westerly_speed = value / 100
         self.westerly_label.setText(f"{value}%")
-        self.status_label.setText(f"Западные ветры: {value}% -> влияет на влажность (выше = влажнее)")
         
     def on_polar_changed(self, value):
         self.polar_speed = value / 100
         self.polar_label.setText(f"{value}%")
-        self.status_label.setText(f"Полярные ветры: {value}% -> влияет на влажность (выше = влажнее)")
         
     def on_global_temp_changed(self, value):
         self.global_temp = value
         self.temp_label.setText(f"{value}°C")
-        self.status_label.setText(f"Температура: {value}°C (нажмите 'Создать биомы' для применения)")
+        
+    def generate_temperature_map(self):
+        """Отдельная кнопка для перегенерации карты температур"""
+        if self.canvas.height_map is None:
+            QMessageBox.warning(self, "Предупреждение", "Сначала создайте карту высот!")
+            return
+        
+        h, w = self.canvas.height_map.shape
+        height_map = self.canvas.height_map
+        sea_level = self.sea_level
+        
+        temperature_map = self.create_temperature_map(w, h, height_map, sea_level)
+        self.canvas.set_temperature_map(temperature_map)
+        self.status_label.setText(f"Карта температур обновлена! Экватор: {self.global_temp:.0f}°C, Полюса: {self.global_temp - 40:.0f}°C")
         
     def set_plate_direction(self, dx, dy, name):
         self.plate_direction = (dx, dy)
@@ -859,7 +914,6 @@ class TerrainGeneratorApp(QMainWindow):
         self.plate_speed = value / 10.0
         self.speed_label.setText(f"{self.plate_speed:.1f}")
         self.canvas.set_plate_speed(self.plate_speed)
-        self.status_label.setText(f"Скорость плит: {self.plate_speed:.1f} (выше скорость = выше горы)")
         
     def on_sea_level_changed(self, value):
         self.sea_level = value / 100.0
@@ -963,8 +1017,6 @@ class TerrainGeneratorApp(QMainWindow):
         mountain_influence = np.zeros((rows, cols))
         trench_influence = np.zeros((rows, cols))
         
-        current_plate_speed = self.plate_speed
-        
         for y in range(rows):
             world_y = y * step
             distortion = self.get_distortion_factor(world_y, h)
@@ -1022,9 +1074,6 @@ class TerrainGeneratorApp(QMainWindow):
                     height_map[y, x] = max(0.1, height_map[y, x] - trench_influence[y, x] * 0.35)
         
         for y in range(rows):
-            world_y = y * step
-            distortion = self.get_distortion_factor(world_y, h)
-            
             for x in range(cols):
                 if height_map[y, x] >= self.sea_level:
                     normalized = (height_map[y, x] - self.sea_level) / (1 - self.sea_level)
@@ -1069,14 +1118,13 @@ class TerrainGeneratorApp(QMainWindow):
         min_dist = float('inf')
         for p1, p2 in edges:
             for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    x1 = p1.x() + dx * world_w
-                    y1 = p1.y() + dy * world_h
-                    x2 = p2.x() + dx * world_w
-                    y2 = p2.y() + dy * world_h
-                    dist = self.point_to_segment_distance(x, y, x1, y1, x2, y2)
-                    if dist < min_dist:
-                        min_dist = dist
+                x1 = p1.x() + dx * world_w
+                y1 = p1.y()
+                x2 = p2.x() + dx * world_w
+                y2 = p2.y()
+                dist = self.point_to_segment_distance(x, y, x1, y1, x2, y2)
+                if dist < min_dist:
+                    min_dist = dist
         return min_dist
     
     def gaussian_blur(self, array, radius):
@@ -1143,17 +1191,26 @@ class TerrainGeneratorApp(QMainWindow):
         return wind
     
     def create_temperature_map(self, w, h, height_map, sea_level):
+        """
+        Создаёт карту температур.
+        Экватор (центр) = глобальная температура
+        Полюса (верх/низ) = глобальная температура - 40
+        """
         temp = np.zeros((h, w))
         center_y = h / 2
         
         for y in range(h):
-            distortion = self.get_distortion_factor(y, h)
+            # Широтный фактор (0.0 на полюсах, 1.0 на экваторе)
+            # Чем дальше от экватора, тем холоднее
             lat_factor = 1 - abs(y - center_y) / center_y
+            # Квадратичная зависимость для более резкого перепада
             lat_factor = lat_factor ** 1.2
             
+            # Температура от широты: на экваторе = global_temp, на полюсах = global_temp - 40
+            base_temp = self.global_temp - (1 - lat_factor) * 40
+            
             for x in range(w):
-                base_temp = self.global_temp * lat_factor * distortion
-                
+                # Высотный фактор (холоднее в горах)
                 height = height_map[y, x]
                 if height < sea_level:
                     height_factor = 1.0
@@ -1162,7 +1219,7 @@ class TerrainGeneratorApp(QMainWindow):
                     height_factor = 1 - normalized_height * 0.5
                 
                 t = base_temp * height_factor
-                temp[y, x] = np.clip(t, -30, 45)
+                temp[y, x] = np.clip(t, -50, 50)
         
         return temp
     
@@ -1225,17 +1282,17 @@ class TerrainGeneratorApp(QMainWindow):
                 path_has_mountain = True
                 mountain_height_factor = min(1.0, (height - 0.65) / 0.3)
         
-        wind_boost = 0.3 + wind_speed * 1.2
+        wind_boost = 0.5 + wind_speed * 1.0
         
         if path_has_mountain:
             if path_has_water:
-                return (0.8 + mountain_height_factor * 0.4) * wind_boost
+                return (0.9 + mountain_height_factor * 0.3) * wind_boost
             else:
-                return max(0.15, (0.35 - mountain_height_factor * 0.15)) * (1 - wind_speed * 0.15)
+                return max(0.2, (0.4 - mountain_height_factor * 0.2)) * (1 - wind_speed * 0.1)
         elif path_has_water:
-            return 0.9 * wind_boost
+            return 1.0 * wind_boost
         else:
-            return 0.6
+            return 0.7
     
     def generate_humidity_map(self):
         if self.canvas.height_map is None:
@@ -1255,21 +1312,20 @@ class TerrainGeneratorApp(QMainWindow):
         QApplication.processEvents()
         
         temperature_map = self.create_temperature_map(w, h, height_map, sea_level)
+        self.canvas.temperature_map = temperature_map
         
         self.status_label.setText("Вычисление расстояния до воды...")
         QApplication.processEvents()
         
         water_distance = self.distance_to_water_smooth(height_map, sea_level)
         
-        self.status_label.setText("Расчёт влажности (с учётом широтного искажения)...")
+        self.status_label.setText("Расчёт влажности...")
         QApplication.processEvents()
         
         humidity_map = np.zeros((h, w))
         step = 6
         
         for y in range(0, h, step):
-            distortion = self.get_distortion_factor(y, h)
-            
             for x in range(0, w, step):
                 height = height_map[y, x]
                 
@@ -1277,28 +1333,29 @@ class TerrainGeneratorApp(QMainWindow):
                     humidity = 0.95
                 else:
                     dist = water_distance[y, x]
-                    water_factor = math.exp(-dist / 60)
+                    water_factor = math.exp(-dist / 80)
                     
                     temp = temperature_map[y, x]
-                    temp_factor = 0.3 + (temp + 10) / 60 * 0.6
-                    temp_factor = np.clip(temp_factor, 0.3, 0.95)
+                    if temp > 25:
+                        temp_factor = 0.9
+                    elif temp > 15:
+                        temp_factor = 0.7
+                    elif temp > 5:
+                        temp_factor = 0.5
+                    else:
+                        temp_factor = 0.3
                     
                     height_normalized = (height - sea_level) / (1 - sea_level)
-                    height_factor = 1 - height_normalized * 0.7
+                    height_factor = 1 - height_normalized * 0.5
                     
                     rain_factor = self.calculate_rain_shadow_with_speed(x, y, wind_map, height_map, sea_level)
                     
-                    wind_speed = wind_map[y, x][2]
-                    wind_direct_boost = wind_speed * 0.4
-                    
-                    humidity = (water_factor * 0.35 + 
+                    humidity = (water_factor * 0.4 + 
                                temp_factor * 0.25 + 
                                height_factor * 0.2 + 
-                               rain_factor * 0.15 +
-                               wind_direct_boost * 0.05)
+                               rain_factor * 0.15)
                     
-                    humidity = humidity * distortion
-                    humidity = np.clip(humidity, 0.08, 0.98)
+                    humidity = np.clip(humidity, 0.15, 0.95)
                 
                 for dy in range(step):
                     for dx in range(step):
@@ -1308,12 +1365,9 @@ class TerrainGeneratorApp(QMainWindow):
         
         humidity_map = self.gaussian_blur(humidity_map, 2)
         
-        avg_wind = (self.trade_wind_speed + self.westerly_speed + self.polar_speed) / 3
-        avg_humidity = np.mean(humidity_map[height_map >= sea_level]) if np.any(height_map >= sea_level) else 0
-        
         self.humidity_map = humidity_map
         self.canvas.set_humidity_map(humidity_map, temperature_map, wind_map)
-        self.status_label.setText(f"Карта влажности создана! Искажение: экватор=1.0, полюса=0.4 | Ветра: пассаты={self.trade_wind_speed*100:.0f}%, зап.={self.westerly_speed*100:.0f}%, пол.={self.polar_speed*100:.0f}% | Ср.влажность: {avg_humidity*100:.0f}%")
+        self.status_label.setText(f"Карта влажности создана!")
     
     def generate_biomes(self):
         if self.humidity_map is None:
@@ -1327,51 +1381,68 @@ class TerrainGeneratorApp(QMainWindow):
         temperature_map = self.create_temperature_map(w, h, height_map, self.sea_level)
         self.canvas.temperature_map = temperature_map
         
+        biome_counts = {b: 0 for b in BiomeType}
+        
         for y in range(h):
             for x in range(w):
                 height = height_map[y, x]
                 
                 if height < self.sea_level:
                     if height < self.sea_level - 0.15:
-                        biome_map[y, x] = BiomeType.OCEAN
+                        biome = BiomeType.OCEAN
                     else:
-                        biome_map[y, x] = BiomeType.SEA
+                        biome = BiomeType.SEA
                 else:
                     temp = temperature_map[y, x]
                     humidity = self.humidity_map[y, x]
                     
                     if height > 0.75:
-                        biome_map[y, x] = BiomeType.MOUNTAIN
-                    elif humidity > 0.7:
-                        if temp > 28:
-                            biome_map[y, x] = BiomeType.TROPICAL_RAINFOREST
-                        elif temp > 15:
-                            biome_map[y, x] = BiomeType.FOREST
-                        elif temp > 0:
-                            biome_map[y, x] = BiomeType.TAIGA
-                        else:
-                            biome_map[y, x] = BiomeType.TUNDRA
-                    elif humidity > 0.45:
-                        if temp > 30:
-                            biome_map[y, x] = BiomeType.SAVANNA
-                        elif temp > 18:
-                            biome_map[y, x] = BiomeType.STEPPE
-                        elif temp > 0:
-                            biome_map[y, x] = BiomeType.TAIGA
-                        else:
-                            biome_map[y, x] = BiomeType.TUNDRA
+                        biome = BiomeType.MOUNTAIN
+                    elif temp > 22 and humidity > 0.65:
+                        biome = BiomeType.TROPICAL_RAINFOREST
+                    elif temp > 18 and humidity > 0.55:
+                        biome = BiomeType.FOREST
+                    elif temp > 12 and humidity > 0.5:
+                        biome = BiomeType.SAVANNA
+                    elif temp > 5 and humidity > 0.4:
+                        biome = BiomeType.STEPPE
+                    elif temp > -5 and humidity > 0.35:
+                        biome = BiomeType.TAIGA
+                    elif temp < 0:
+                        biome = BiomeType.TUNDRA
+                    elif humidity < 0.25:
+                        biome = BiomeType.DESERT
                     else:
-                        if temp > 30:
-                            biome_map[y, x] = BiomeType.DESERT
-                        elif temp > 20:
-                            biome_map[y, x] = BiomeType.STEPPE
-                        elif temp > -5:
-                            biome_map[y, x] = BiomeType.TUNDRA
-                        else:
-                            biome_map[y, x] = BiomeType.TUNDRA
+                        biome = BiomeType.STEPPE
+                
+                biome_map[y, x] = biome
+                biome_counts[biome] += 1
         
         self.canvas.set_biome_map(biome_map)
-        self.status_label.setText(f"Карта биомов создана! (температура: {self.global_temp}°C)")
+        
+        # Вывод статистики биомов
+        total_land = sum(biome_counts[b] for b in [BiomeType.TROPICAL_RAINFOREST, BiomeType.FOREST, BiomeType.TAIGA, 
+                                                     BiomeType.TUNDRA, BiomeType.DESERT, BiomeType.SAVANNA, 
+                                                     BiomeType.STEPPE, BiomeType.MOUNTAIN])
+        if total_land > 0:
+            stats = []
+            for biome, count in biome_counts.items():
+                if count > 0 and biome not in [BiomeType.OCEAN, BiomeType.SEA]:
+                    stats.append(f"{biome.value}: {count/total_land*100:.1f}%")
+            self.status_label.setText(f"Карта биомов создана! | " + " | ".join(stats[:6]))
+        else:
+            self.status_label.setText("Карта биомов создана! (нет суши)")
+    
+    def show_temperature_map(self):
+        if self.canvas.temperature_map is not None:
+            self.canvas.show_temperature = True
+            self.canvas.show_biomes = False
+            self.canvas.show_heightmap = False
+            self.canvas.show_humidity = False
+            self.canvas.show_winds = False
+            self.canvas.update()
+        else:
+            QMessageBox.warning(self, "Предупреждение", "Сначала создайте карту температур!")
     
     # ------------------------------ ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ------------------------------
     def douglas_peucker(self, points, epsilon):
@@ -1447,6 +1518,7 @@ class TerrainGeneratorApp(QMainWindow):
             self.canvas.show_biomes = True
             self.canvas.show_heightmap = False
             self.canvas.show_humidity = False
+            self.canvas.show_temperature = False
             self.canvas.show_winds = False
             self.canvas.update()
         elif self.canvas.height_map is not None:
@@ -1457,6 +1529,7 @@ class TerrainGeneratorApp(QMainWindow):
             self.canvas.show_humidity = True
             self.canvas.show_biomes = False
             self.canvas.show_heightmap = False
+            self.canvas.show_temperature = False
             self.canvas.show_winds = False
             self.canvas.update()
         else:
@@ -1467,6 +1540,7 @@ class TerrainGeneratorApp(QMainWindow):
             self.canvas.show_heightmap = True
             self.canvas.show_biomes = False
             self.canvas.show_humidity = False
+            self.canvas.show_temperature = False
             self.canvas.show_winds = False
             self.canvas.update()
         else:
