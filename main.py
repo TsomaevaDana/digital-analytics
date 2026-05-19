@@ -107,6 +107,7 @@ class MapCanvas(QWidget):
         self.show_humidity = False
         self.show_temperature = False
         self.show_winds = False
+        self.show_climate_zones = False  # световые пояса
         
         self.pan_active = False
         self.pan_start = QPoint()
@@ -209,6 +210,7 @@ class MapCanvas(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         painter.fillRect(self.rect(), QColor(173, 216, 230))
         
+        # Сначала рисуем основную карту
         if self.biome_map is not None and self.show_biomes:
             self.draw_biome_map(painter)
         elif self.temperature_map is not None and self.show_temperature:
@@ -221,7 +223,6 @@ class MapCanvas(QWidget):
             w = self.width()
             h = self.height()
             
-            # Отрисовка материков с учётом тора (только по горизонтали)
             for cont in self.continents:
                 for dx in (-1, 0, 1):
                     shifted = [QPointF(p.x() + dx * w, p.y()) for p in cont]
@@ -234,7 +235,6 @@ class MapCanvas(QWidget):
                 for i in range(len(self.current_continent_points)-1):
                     painter.drawLine(self.current_continent_points[i], self.current_continent_points[i+1])
             
-            # Отрисовка плит с учётом тора (только по горизонтали)
             for plate in self.plates:
                 for dx in (-1, 0, 1):
                     shifted = [QPointF(p.x() + dx * w, p.y()) for p in plate.points]
@@ -243,7 +243,6 @@ class MapCanvas(QWidget):
                     if len(shifted) > 1:
                         painter.drawPolygon(QPolygonF(shifted))
                 
-                # Стрелка направления (только в основном положении)
                 if plate.points:
                     center = self.polygon_center(plate.points)
                     dx, dy = plate.direction
@@ -266,8 +265,65 @@ class MapCanvas(QWidget):
                 for i in range(len(self.current_plate_points)-1):
                     painter.drawLine(self.current_plate_points[i], self.current_plate_points[i+1])
         
+        # Затем рисуем ветра поверх карты
         if self.wind_map is not None and self.show_winds:
             self.draw_wind_map(painter)
+        
+        # Затем рисуем световые пояса поверх всего (с прозрачностью)
+        if self.show_climate_zones:
+            self.draw_climate_zones(painter)
+    
+    def draw_climate_zones(self, painter):
+        """Рисует световые пояса поверх карты с прозрачностью"""
+        h = self.height()
+        w = self.width()
+        center_y = h / 2
+        
+        # Тропический пояс (23.5° от экватора) - примерно 26% от половины высоты
+        tropic_boundary = center_y * 0.26
+        # Полярный пояс (66.5° от экватора) - примерно 74% от половины высоты
+        polar_boundary = center_y * 0.74
+        
+        # Жаркий пояс (тропический) - жёлтый с прозрачностью
+        tropic_rect = QRect(0, int(center_y - tropic_boundary), w, int(tropic_boundary * 2))
+        painter.fillRect(tropic_rect, QColor(255, 255, 100, 50))
+        
+        # Умеренные пояса - зелёные с прозрачностью
+        north_temp_rect = QRect(0, int(center_y - polar_boundary), w, int(polar_boundary - tropic_boundary))
+        painter.fillRect(north_temp_rect, QColor(100, 200, 100, 50))
+        
+        south_temp_rect = QRect(0, int(center_y + tropic_boundary), w, int(polar_boundary - tropic_boundary))
+        painter.fillRect(south_temp_rect, QColor(100, 200, 100, 50))
+        
+        # Полярные пояса - голубые с прозрачностью
+        north_polar_rect = QRect(0, 0, w, int(center_y - polar_boundary))
+        painter.fillRect(north_polar_rect, QColor(100, 150, 255, 60))
+        
+        south_polar_rect = QRect(0, int(center_y + polar_boundary), w, int(center_y - polar_boundary))
+        painter.fillRect(south_polar_rect, QColor(100, 150, 255, 60))
+        
+        # Рисуем границы
+        painter.setPen(QPen(QColor(0, 0, 0, 150), 1, Qt.DashLine))
+        painter.drawLine(0, int(center_y - tropic_boundary), w, int(center_y - tropic_boundary))
+        painter.drawLine(0, int(center_y + tropic_boundary), w, int(center_y + tropic_boundary))
+        painter.drawLine(0, int(center_y - polar_boundary), w, int(center_y - polar_boundary))
+        painter.drawLine(0, int(center_y + polar_boundary), w, int(center_y + polar_boundary))
+        
+        # Подписи
+        painter.setPen(QPen(QColor(0, 0, 0, 200), 1))
+        font = painter.font()
+        font.setPointSize(10)
+        painter.setFont(font)
+        painter.drawText(10, int(center_y - tropic_boundary - 5), "Северный тропик")
+        painter.drawText(10, int(center_y + tropic_boundary - 5), "Южный тропик")
+        painter.drawText(10, int(center_y - polar_boundary - 5), "Северный полярный круг")
+        painter.drawText(10, int(center_y + polar_boundary - 5), "Южный полярный круг")
+        
+        painter.drawText(w - 120, int(center_y - polar_boundary - 5), "Полярный пояс")
+        painter.drawText(w - 120, int(center_y - tropic_boundary - 5), "Умеренный пояс")
+        painter.drawText(w - 100, int(center_y - 10), "Тропический пояс")
+        painter.drawText(w - 120, int(center_y + tropic_boundary + 15), "Умеренный пояс")
+        painter.drawText(w - 120, int(center_y + polar_boundary + 15), "Полярный пояс")
     
     def draw_temperature_map(self, painter):
         if self.temperature_map is None:
@@ -279,7 +335,6 @@ class MapCanvas(QWidget):
             for x in range(0, w, block_size):
                 temp = self.temperature_map[y, x]
                 
-                # От холодного (синий) к тёплому (красный)
                 if temp < -30:
                     color = QColor(30, 30, 120)
                 elif temp < -20:
@@ -501,6 +556,11 @@ class MapCanvas(QWidget):
         self.show_heightmap = False
         self.show_humidity = False
         self.update()
+    
+    def toggle_climate_zones(self):
+        """Включает/выключает отображение световых поясов"""
+        self.show_climate_zones = not self.show_climate_zones
+        self.update()
 
 # ------------------------------ Главное окно ------------------------------
 class TerrainGeneratorApp(QMainWindow):
@@ -669,6 +729,7 @@ class TerrainGeneratorApp(QMainWindow):
         btn_show_height = QPushButton("Показать высоты")
         btn_show_temperature = QPushButton("Показать температуру")
         btn_show_winds = QPushButton("Показать ветра")
+        btn_show_climate = QPushButton("Показать световые пояса")
         btn_save = QPushButton("Сохранить карту")
         btn_load = QPushButton("Загрузить карту")
         
@@ -683,6 +744,7 @@ class TerrainGeneratorApp(QMainWindow):
         btn_show_height.clicked.connect(self.show_height_map)
         btn_show_temperature.clicked.connect(self.show_temperature_map)
         btn_show_winds.clicked.connect(self.show_winds)
+        btn_show_climate.clicked.connect(self.toggle_climate_zones)
         btn_save.clicked.connect(self.save_map)
         btn_load.clicked.connect(self.load_map)
         
@@ -697,6 +759,7 @@ class TerrainGeneratorApp(QMainWindow):
         actions_layout.addWidget(btn_show_height)
         actions_layout.addWidget(btn_show_temperature)
         actions_layout.addWidget(btn_show_winds)
+        actions_layout.addWidget(btn_show_climate)
         actions_layout.addWidget(btn_save)
         actions_layout.addWidget(btn_load)
         actions_group.setLayout(actions_layout)
@@ -712,10 +775,14 @@ class TerrainGeneratorApp(QMainWindow):
             "6. Настройте скорость ветров\n"
             "7. Нажмите 'Создать карту влажности'\n"
             "8. Нажмите 'Создать биомы'\n\n"
+            "ВЕТРА ПО ТЗ:\n"
+            "• Пассаты (тропики): от тропиков к экватору\n"
+            "  Северное полушарие: северо-восточные\n"
+            "  Южное полушарие: юго-восточные\n"
+            "• Западные ветры: юго-западные (Сев.) / северо-западные (Юж.)\n"
+            "• Полярные ветры: от полюсов, северо-восточные (Сев.) / юго-восточные (Юж.)\n\n"
+            "СВЕТОВЫЕ ПОЯСА: накладываются поверх карты с прозрачностью\n\n"
             "Карта соединяется ТОЛЬКО по горизонтали (лево-право)\n"
-            "Температура: Экватор = глобальная, Полюса = глобальная - 40°C\n\n"
-            "СОХРАНЕНИЕ: сохраняет все карты и настройки в JSON\n"
-            "ЗАГРУЗКА: загружает ранее сохранённую карту\n\n"
             "ПКМ + перетаскивание - перемещение"
         )
         info_text.setWordWrap(True)
@@ -728,6 +795,11 @@ class TerrainGeneratorApp(QMainWindow):
         self.status_label.setFrameStyle(QFrame.Sunken)
         control_layout.addWidget(self.status_label)
         control_layout.addStretch()
+    
+    def toggle_climate_zones(self):
+        """Включает/выключает отображение световых поясов"""
+        self.canvas.toggle_climate_zones()
+        self.status_label.setText("Световые пояса " + ("включены" if self.canvas.show_climate_zones else "выключены"))
     
     # ------------------------------ ФУНКЦИЯ КОЭФФИЦИЕНТА ИСКАЖЕНИЯ ПО ШИРОТЕ ------------------------------
     def get_distortion_factor(self, y, h):
@@ -1142,45 +1214,75 @@ class TerrainGeneratorApp(QMainWindow):
             result = temp
         return result
     
-    # ------------------------------ ГЕНЕРАЦИЯ ВЛАЖНОСТИ ------------------------------
+    # ------------------------------ ГЕНЕРАЦИЯ ВЕТРОВ ПО ТЗ ------------------------------
     
     def create_wind_map(self, w, h):
+        """
+        Создаёт карту ветров согласно ТЗ:
+        - Северное полушарие (y < center_y)
+        - Южное полушарие (y > center_y)
+        
+        Пассаты (тропики): от тропиков к экватору
+        - Северное полушарие: северо-восточные (dx: +, dy: + к экватору)
+        - Южное полушарие: юго-восточные (dx: +, dy: - к экватору)
+        
+        Западные ветры (умеренные):
+        - Северное полушарие: юго-западные (dx: -, dy: +)
+        - Южное полушарие: северо-западные (dx: -, dy: -)
+        
+        Полярные ветры (от полюсов к умеренным):
+        - Северное полушарие: северо-восточные (dx: +, dy: + от полюса)
+        - Южное полушарие: юго-восточные (dx: +, dy: - от полюса)
+        """
         wind = np.zeros((h, w, 3))
         center_y = h / 2
         
         for y in range(h):
-            lat = (y - center_y) / center_y
+            # Нормализованная широта (-1..1, 0 - экватор)
+            lat = (center_y - y) / center_y
             abs_lat = abs(lat)
             
             for x in range(w):
-                if abs_lat < 0.35:
-                    if lat > 0:
-                        dx = -0.85
-                        dy = 0.85
-                        speed = self.trade_wind_speed
-                    else:
+                # Пассаты (тропики) - от тропиков к экватору
+                if abs_lat < 0.4:
+                    if lat > 0:  # Северное полушарие (y < center_y)
+                        # Северо-восточные ветры (к экватору на юг)
                         dx = 0.85
-                        dy = -0.85
+                        dy = 0.5
                         speed = self.trade_wind_speed
+                    else:  # Южное полушарие (y > center_y)
+                        # Юго-восточные ветры (к экватору на север)
+                        dx = 0.85
+                        dy = -0.5
+                        speed = self.trade_wind_speed
+                
+                # Западные ветры (умеренные широты)
                 elif abs_lat < 0.7:
-                    if lat > 0:
+                    if lat > 0:  # Северное полушарие
+                        # Юго-западные ветры
                         dx = -0.7
                         dy = 0.7
                         speed = self.westerly_speed
-                    else:
+                    else:  # Южное полушарие
+                        # Северо-западные ветры
                         dx = -0.7
                         dy = -0.7
                         speed = self.westerly_speed
+                
+                # Полярные ветры (от полюсов к умеренным)
                 else:
-                    if lat > 0:
+                    if lat > 0:  # Северное полушарие
+                        # Северо-восточные ветры (от полюса)
                         dx = 0.6
-                        dy = -0.8
+                        dy = 0.6
                         speed = self.polar_speed
-                    else:
+                    else:  # Южное полушарие
+                        # Юго-восточные ветры (от полюса)
                         dx = 0.6
-                        dy = 0.8
+                        dy = -0.6
                         speed = self.polar_speed
                 
+                # Нормализуем направление
                 length = math.hypot(dx, dy)
                 if length > 0:
                     dx /= length
@@ -1191,26 +1293,16 @@ class TerrainGeneratorApp(QMainWindow):
         return wind
     
     def create_temperature_map(self, w, h, height_map, sea_level):
-        """
-        Создаёт карту температур.
-        Экватор (центр) = глобальная температура
-        Полюса (верх/низ) = глобальная температура - 40
-        """
         temp = np.zeros((h, w))
         center_y = h / 2
         
         for y in range(h):
-            # Широтный фактор (0.0 на полюсах, 1.0 на экваторе)
-            # Чем дальше от экватора, тем холоднее
             lat_factor = 1 - abs(y - center_y) / center_y
-            # Квадратичная зависимость для более резкого перепада
             lat_factor = lat_factor ** 1.2
             
-            # Температура от широты: на экваторе = global_temp, на полюсах = global_temp - 40
             base_temp = self.global_temp - (1 - lat_factor) * 40
             
             for x in range(w):
-                # Высотный фактор (холоднее в горах)
                 height = height_map[y, x]
                 if height < sea_level:
                     height_factor = 1.0
@@ -1420,7 +1512,6 @@ class TerrainGeneratorApp(QMainWindow):
         
         self.canvas.set_biome_map(biome_map)
         
-        # Вывод статистики биомов
         total_land = sum(biome_counts[b] for b in [BiomeType.TROPICAL_RAINFOREST, BiomeType.FOREST, BiomeType.TAIGA, 
                                                      BiomeType.TUNDRA, BiomeType.DESERT, BiomeType.SAVANNA, 
                                                      BiomeType.STEPPE, BiomeType.MOUNTAIN])
