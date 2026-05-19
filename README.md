@@ -4,4 +4,4 @@
 
 Чат 2: https://chat.deepseek.com/share/r066vkvyb63oay0u7t
 
-Чат 3: https://chat.deepseek.com/share/ffspdkya2h6olembyw
+Чат 3: https://chat.deepseek.com/share/zbcs1zhulej9uwtwqq
